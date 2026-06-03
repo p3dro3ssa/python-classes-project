@@ -1,68 +1,107 @@
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 import zipfile
 import os
 
 
-def select_file():
-    """Opens a dialog to select the .pak file."""
-    root = tk.Tk()
-    root.withdraw()
-    path = filedialog.askopenfilename(
-        title="Select Dying Light 2 .pak file",
-        filetypes=[("PAK Files", "*.pak"), ("All Files", "*.*")]
-    )
-    return path
+class InternalFileSelector:
+    def __init__(self, file_list):
+        self.root = tk.Toplevel()
+        self.root.title("Internal .pak Browser")
+        self.root.geometry("700x500")
+
+        self.original_list = sorted(file_list)
+        self.selected_file = None
+
+        # UI Elements
+        tk.Label(self.root, text="Search for a file inside the .pak:", font=('Arial', 10, 'bold')).pack(pady=5)
+
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add("write", self.update_list)
+        self.search_entry = tk.Entry(self.root, textvariable=self.search_var)
+        self.search_entry.pack(fill="x", padx=20, pady=5)
+
+        self.frame = tk.Frame(self.root)
+        self.frame.pack(expand=True, fill="both", padx=20, pady=10)
+
+        self.scrollbar = tk.Scrollbar(self.frame)
+        self.scrollbar.pack(side="right", fill="y")
+
+        self.listbox = tk.Listbox(self.frame, yscrollcommand=self.scrollbar.set, font=('Consolas', 9))
+        self.listbox.pack(expand=True, fill="both", side="left")
+        self.scrollbar.config(command=self.listbox.yview)
+
+        self.btn = tk.Button(self.root, text="Select File to Swap", bg="#4CAF50", fg="white",
+                             command=self.confirm_selection, height=2)
+        self.btn.pack(pady=10, fill="x", padx=20)
+
+        self.update_list()
+
+        # This makes the main script wait until this window is closed
+        self.root.grab_set()
+        self.root.wait_window()
+
+    def update_list(self, *args):
+        search_term = self.search_var.get().lower()
+        self.listbox.delete(0, tk.END)
+        for name in self.original_list:
+            if search_term in name.lower():
+                self.listbox.insert(tk.END, name)
+
+    def confirm_selection(self):
+        selection = self.listbox.curselection()
+        if selection:
+            self.selected_file = self.listbox.get(selection[0])
+            self.root.destroy()
+        else:
+            messagebox.showwarning("Selection Required", "Please select a file from the list first!")
 
 
-def check_header(path):
-    """Checks if the file starts with the ZIP magic bytes."""
-    with open(path, 'rb') as f:
-        header = f.read(4)
-    return header == b'PK\x03\x04'
-
-
-def scan_pak(path):
-    """Extracts and displays insights from the .pak file."""
-    print(f"\n{'=' * 50}")
-    print(f"ANALYZING: {os.path.basename(path)}")
-    print(f"{'=' * 50}")
-
-    if not check_header(path):
-        print("Result: This is NOT a standard ZIP-based .pak file.")
-        return
-
+def get_pak_content(path):
+    """Returns a list of filenames inside the .pak."""
     try:
         with zipfile.ZipFile(path, 'r') as pak:
-            file_list = pak.infolist()
-            total_files = len(file_list)
-
-            print(f"Format: Valid ZIP-based Archive")
-            print(f"Total Files Found: {total_files}")
-            print(f"{'-' * 50}")
-            print(f"{'File Path':<50} | {'Size (KB)':<10}")
-            print(f"{'-' * 50}")
-
-            # Display the first 15 files as a sample
-            for info in file_list[:15]:
-                size_kb = round(info.file_size / 1024, 2)
-                print(f"{info.filename[:50]:<50} | {size_kb:<10}")
-
-            if total_files > 15:
-                print(f"\n... and {total_files - 15} more files.")
-
-    except zipfile.BadZipFile:
-        print("Error: The file is corrupted or not a valid ZIP.")
+            return pak.namelist()
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        messagebox.showerror("Error", f"Could not read .pak: {e}")
+        return []
+
+
+def main():
+    # 1. Hide the main empty Tkinter window
+    root = tk.Tk()
+    root.withdraw()
+
+    # 2. Select the .pak file
+    pak_path = filedialog.askopenfilename(title="Select .pak File", filetypes=[("PAK Files", "*.pak")])
+    if not pak_path:
+        return
+
+    # 3. Get contents and open our custom selector
+    print("Reading .pak index...")
+    internal_files = get_pak_content(pak_path)
+
+    if internal_files:
+        selector = InternalFileSelector(internal_files)
+
+        if selector.selected_file:
+            print(f"\nSUCCESS: You selected to swap: {selector.selected_file}")
+
+            # 4. Now ask for the REPLACEMENT file on the computer
+            replacement_path = filedialog.askopenfilename(
+                title=f"Select replacement for {os.path.basename(selector.selected_file)}")
+
+            if replacement_path:
+                print(f"REPLACEMENT FILE: {replacement_path}")
+                print("\nNext Step: Implement the actual Injection logic!")
+            else:
+                print("Replacement selection cancelled.")
+    else:
+        print("The .pak file appears to be empty or invalid.")
 
 
 if __name__ == "__main__":
-    selected_path = select_file()
-    if selected_path:
-        scan_pak(selected_path)
-    else:
-        print("No file selected.")
+    main()
 
 
 
