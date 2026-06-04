@@ -5,41 +5,38 @@ import os
 
 
 class InternalFileSelector:
-    def __init__(self, file_list):
-        self.root = tk.Toplevel()
+    """A pop-up window to browse and search files inside a .pak archive."""
+
+    def __init__(self, parent, file_list):
+        self.root = tk.Toplevel(parent)
         self.root.title("Internal .pak Browser")
-        self.root.geometry("700x500")
+        self.root.geometry("600x500")
 
         self.original_list = sorted(file_list)
         self.selected_file = None
 
-        # UI Elements
-        tk.Label(self.root, text="Search for a file inside the .pak:", font=('Arial', 10, 'bold')).pack(pady=5)
-
+        # Search UI
+        tk.Label(self.root, text="Search internal files:", font=('Arial', 10, 'bold')).pack(pady=5)
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", self.update_list)
-        self.search_entry = tk.Entry(self.root, textvariable=self.search_var)
-        self.search_entry.pack(fill="x", padx=20, pady=5)
+        tk.Entry(self.root, textvariable=self.search_var).pack(fill="x", padx=20, pady=5)
 
+        # Listbox
         self.frame = tk.Frame(self.root)
         self.frame.pack(expand=True, fill="both", padx=20, pady=10)
-
         self.scrollbar = tk.Scrollbar(self.frame)
         self.scrollbar.pack(side="right", fill="y")
-
         self.listbox = tk.Listbox(self.frame, yscrollcommand=self.scrollbar.set, font=('Consolas', 9))
         self.listbox.pack(expand=True, fill="both", side="left")
         self.scrollbar.config(command=self.listbox.yview)
 
-        self.btn = tk.Button(self.root, text="Select File to Swap", bg="#4CAF50", fg="white",
-                             command=self.confirm_selection, height=2)
-        self.btn.pack(pady=10, fill="x", padx=20)
+        tk.Button(self.root, text="Add to Staging Queue", bg="#4CAF50", fg="white",
+                  command=self.confirm_selection, height=2).pack(pady=10, fill="x", padx=20)
 
         self.update_list()
-
-        # This makes the main script wait until this window is closed
         self.root.grab_set()
         self.root.wait_window()
+
     def update_list(self, *args):
         search_term = self.search_var.get().lower()
         self.listbox.delete(0, tk.END)
@@ -52,118 +49,100 @@ class InternalFileSelector:
         if selection:
             self.selected_file = self.listbox.get(selection[0])
             self.root.destroy()
-        else:
-            messagebox.showwarning("Selection Required", "Please select a file from the list first!")
 
 
-def rebuild_pak(original_path, target_internal_path, replacement_disk_path):
-    """
-    Creates a new .pak file, copying all files from the original
-    except the target, which is replaced by the new file.
-    """
-    # Create a name for the new file
-    folder = os.path.dirname(original_path)
-    new_filename = "modded_" + os.path.basename(original_path)
-    output_path = os.path.join(folder, new_filename)
+class ModDashboard:
+    """The main application dashboard."""
 
-    print(f"Creating: {new_filename}...")
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Dying Light 2 Mod Manager")
+        self.root.geometry("800x500")
 
-    try:
-        with zipfile.ZipFile(original_path, 'r') as old_pak:
-            with zipfile.ZipFile(output_path, 'w', compression=zipfile.ZIP_DEFLATED) as new_pak:
+        self.staging_queue = []  # List of dicts: {'source': path, 'internal': path}
 
-                for item in old_pak.infolist():
-                    # Case 1: This is the file we want to replace
-                    if item.filename == target_internal_path:
-                        print(f"-> Injecting new version of: {item.filename}")
-                        with open(replacement_disk_path, 'rb') as f:
-                            new_pak.writestr(item.filename, f.read())
+        # --- UI Setup ---
+        self.setup_ui()
 
-                    # Case 2: This is a normal file, just copy it
-                    else:
-                        # We read the data from the old and write to the new
-                        new_pak.writestr(item, old_pak.read(item.filename))
+    def setup_ui(self):
+        # Left Side: Queue Display
+        self.list_frame = tk.Frame(self.root)
+        self.list_frame.pack(side="left", expand=True, fill="both", padx=10, pady=10)
 
-        print(f"\nSUCCESS! Your modded file is located at:\n{output_path}")
-        messagebox.showinfo("Success", f"Modded file created:\n{new_filename}")
+        tk.Label(self.list_frame, text="Staging Queue (Files to be Packed):", font=("Arial", 10, "bold")).pack()
+        self.queue_listbox = tk.Listbox(self.list_frame, font=("Consolas", 9))
+        self.queue_listbox.pack(expand=True, fill="both", pady=5)
 
-    except Exception as e:
-        print(f"An error occurred during reconstruction: {e}")
-        messagebox.showerror("Error", f"Failed to rebuild .pak: {e}")
+        # Right Side: Controls
+        self.ctrl_frame = tk.Frame(self.root)
+        self.ctrl_frame.pack(side="right", fill="y", padx=10, pady=10)
 
-def get_pak_content(path):
-    """Returns a list of filenames inside the .pak."""
-    try:
-        with zipfile.ZipFile(path, 'r') as pak:
-            return pak.namelist()
-    except Exception as e:
-        messagebox.showerror("Error", f"Could not read .pak: {e}")
-        return []
+        tk.Button(self.ctrl_frame, text="Add File from .pak", width=25, command=self.action_add_pak).pack(pady=5)
+        tk.Button(self.ctrl_frame, text="Remove Selected", width=25, command=self.action_remove).pack(pady=5)
 
+        tk.Frame(self.ctrl_frame, height=2, bd=1, relief="sunken").pack(fill="x", pady=20)
 
-def main():
-    # 1. Hide the main empty Tkinter window
-    root = tk.Tk()
-    root.withdraw()
+        tk.Button(self.ctrl_frame, text="BUILD MOD .PAK", width=25, bg="#2196F3", fg="white",
+                  font=("Arial", 10, "bold"), command=self.action_build).pack(side="bottom", pady=10)
 
-    # 2. Select the .pak file
-    pak_path = filedialog.askopenfilename(title="Select .pak File", filetypes=[("PAK Files", "*.pak")])
-    if not pak_path:
-        return
+    def action_add_pak(self):
+        pak_path = filedialog.askopenfilename(title="Select Source .pak", filetypes=[("PAK Files", "*.pak")])
+        if not pak_path: return
 
-    # 3. Get contents and open our custom selector
-    print("Reading .pak index...")
-    internal_files = get_pak_content(pak_path)
+        try:
+            with zipfile.ZipFile(pak_path, 'r') as zip_ref:
+                file_list = zip_ref.namelist()
 
-    if internal_files:
-        selector = InternalFileSelector(internal_files)
+            selector = InternalFileSelector(self.root, file_list)
+            if selector.selected_file:
+                self.add_to_queue(pak_path, selector.selected_file)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to read .pak: {e}")
 
-        if selector.selected_file:
-            print(f"\nSUCCESS: You selected to swap: {selector.selected_file}")
+    def add_to_queue(self, source, internal):
+        # Duplicate Check
+        for i, item in enumerate(self.staging_queue):
+            if item['internal'] == internal:
+                if messagebox.askyesno("Duplicate", f"'{internal}' is already staged.\nReplace it?"):
+                    self.staging_queue[i] = {'source': source, 'internal': internal}
+                    self.refresh_listbox()
+                return
 
-            # 4. Now ask for the REPLACEMENT file on the computer
-            replacement_path = filedialog.askopenfilename(
-                title=f"Select replacement for {os.path.basename(selector.selected_file)}")
+        self.staging_queue.append({'source': source, 'internal': internal})
+        self.refresh_listbox()
 
-            if replacement_path:
-                print(f"REPLACEMENT FILE: {replacement_path}")
+    def action_remove(self):
+        selection = self.queue_listbox.curselection()
+        if selection:
+            del self.staging_queue[selection[0]]
+            self.refresh_listbox()
 
-                # CALL THE REBUILD LOGIC HERE
-                rebuild_pak(pak_path, selector.selected_file, replacement_path)
-            else:
-                print("Replacement selection cancelled.")
-    else:
-        print("The .pak file appears to be empty or invalid.")
-        # ... inside your main() function, after selecting replacement_path ...
+    def refresh_listbox(self):
+        self.queue_listbox.delete(0, tk.END)
+        for item in self.staging_queue:
+            display = f"{item['internal']}  <-- ({os.path.basename(item['source'])})"
+            self.queue_listbox.insert(tk.END, display)
+
+    def action_build(self):
+        if not self.staging_queue:
+            messagebox.showwarning("Empty", "Add files to the queue first!")
+            return
+
+        out_path = filedialog.asksaveasfilename(title="Save Mod", initialfile="data_my_mod.pak",
+                                                filetypes=[("PAK Files", "*.pak")])
+        if not out_path: return
+
+        try:
+            with zipfile.ZipFile(out_path, 'w', compression=zipfile.ZIP_DEFLATED) as master:
+                for item in self.staging_queue:
+                    with zipfile.ZipFile(item['source'], 'r') as src:
+                        master.writestr(item['internal'], src.read(item['internal']))
+            messagebox.showinfo("Success", "Mod .pak created successfully!")
+        except Exception as e:
+            messagebox.showerror("Build Error", str(e))
+
 
 if __name__ == "__main__":
-    main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    root = tk.Tk()
+    app = ModDashboard(root)
+    root.mainloop()
