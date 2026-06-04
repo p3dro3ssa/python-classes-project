@@ -40,7 +40,6 @@ class InternalFileSelector:
         # This makes the main script wait until this window is closed
         self.root.grab_set()
         self.root.wait_window()
-
     def update_list(self, *args):
         search_term = self.search_var.get().lower()
         self.listbox.delete(0, tk.END)
@@ -56,6 +55,41 @@ class InternalFileSelector:
         else:
             messagebox.showwarning("Selection Required", "Please select a file from the list first!")
 
+
+def rebuild_pak(original_path, target_internal_path, replacement_disk_path):
+    """
+    Creates a new .pak file, copying all files from the original
+    except the target, which is replaced by the new file.
+    """
+    # Create a name for the new file
+    folder = os.path.dirname(original_path)
+    new_filename = "modded_" + os.path.basename(original_path)
+    output_path = os.path.join(folder, new_filename)
+
+    print(f"Creating: {new_filename}...")
+
+    try:
+        with zipfile.ZipFile(original_path, 'r') as old_pak:
+            with zipfile.ZipFile(output_path, 'w', compression=zipfile.ZIP_DEFLATED) as new_pak:
+
+                for item in old_pak.infolist():
+                    # Case 1: This is the file we want to replace
+                    if item.filename == target_internal_path:
+                        print(f"-> Injecting new version of: {item.filename}")
+                        with open(replacement_disk_path, 'rb') as f:
+                            new_pak.writestr(item.filename, f.read())
+
+                    # Case 2: This is a normal file, just copy it
+                    else:
+                        # We read the data from the old and write to the new
+                        new_pak.writestr(item, old_pak.read(item.filename))
+
+        print(f"\nSUCCESS! Your modded file is located at:\n{output_path}")
+        messagebox.showinfo("Success", f"Modded file created:\n{new_filename}")
+
+    except Exception as e:
+        print(f"An error occurred during reconstruction: {e}")
+        messagebox.showerror("Error", f"Failed to rebuild .pak: {e}")
 
 def get_pak_content(path):
     """Returns a list of filenames inside the .pak."""
@@ -93,12 +127,14 @@ def main():
 
             if replacement_path:
                 print(f"REPLACEMENT FILE: {replacement_path}")
-                print("\nNext Step: Implement the actual Injection logic!")
+
+                # CALL THE REBUILD LOGIC HERE
+                rebuild_pak(pak_path, selector.selected_file, replacement_path)
             else:
                 print("Replacement selection cancelled.")
     else:
         print("The .pak file appears to be empty or invalid.")
-
+        # ... inside your main() function, after selecting replacement_path ...
 
 if __name__ == "__main__":
     main()
